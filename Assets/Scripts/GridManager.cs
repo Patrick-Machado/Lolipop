@@ -2,7 +2,6 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-
 public class GridManager : MonoBehaviour
 {
     [Header("Grid Settings")]
@@ -16,17 +15,17 @@ public class GridManager : MonoBehaviour
     [SerializeField] private Transform cardContainer;
 
     [Header("Sprite Sheet Management")]
-    [SerializeField] private Sprite backSprite; // Back of cards
-    [SerializeField] private List<Sprite> frontSprites = new List<Sprite>(); // Fruit sprites
+    [SerializeField] private Sprite backSprite;
+    [SerializeField] private List<Sprite> frontSprites = new List<Sprite>();
 
     // Game state
     private CardController[,] cardGrid;
     private List<CardController> flippedCards = new List<CardController>();
-    private bool isCheckingMatch = false;
+    private Coroutine matchCheckCoroutine;
 
-
-    public static bool canClickAgain = true;
-    #region Initialization
+    // Click tracking
+    private float lastClickTime = 0f;
+    private const float CLICK_DELAY = 0.2f;
 
     void Start()
     {
@@ -40,23 +39,18 @@ public class GridManager : MonoBehaviour
     {
         int totalCards = rows * columns;
 
-        // Ensure even number of cards for pairs
         if (totalCards % 2 != 0)
         {
             Debug.LogWarning($"Grid size {rows}x{columns} creates odd number of cards ({totalCards}). Adding one more column.");
             columns++;
         }
 
-        // Ensure we have enough unique sprites
         int neededPairs = totalCards / 2;
         if (frontSprites.Count < neededPairs)
         {
             Debug.LogError($"Need at least {neededPairs} unique sprites but only have {frontSprites.Count}");
-            // In production, you'd want to handle this better
         }
     }
-
-    #endregion
 
     #region Grid Generation
 
@@ -93,10 +87,7 @@ public class GridManager : MonoBehaviour
             return;
         }
 
-        // Card will be initialized later with proper sprites
         cardGrid[row, col] = card;
-
-        // Subscribe to events
         card.OnCardClicked += HandleCardClicked;
         card.OnFlipComplete += HandleFlipComplete;
     }
@@ -106,7 +97,6 @@ public class GridManager : MonoBehaviour
         int totalCards = rows * columns;
         List<int> cardPairs = new List<int>();
 
-        // Create pairs
         for (int i = 0; i < totalCards / 2; i++)
         {
             int spriteIndex = i % frontSprites.Count;
@@ -114,10 +104,8 @@ public class GridManager : MonoBehaviour
             cardPairs.Add(spriteIndex);
         }
 
-        // Shuffle the pairs
         ShuffleList(cardPairs);
 
-        // Assign to cards
         int index = 0;
         for (int row = 0; row < rows; row++)
         {
@@ -154,29 +142,24 @@ public class GridManager : MonoBehaviour
 
     #endregion
 
-# region card Positioning & Scaling
+    #region Card Positioning & Scaling
 
     private void PositionCards()
     {
         if (cardContainer == null) return;
 
-        // Get container bounds (you can use Screen.width/height for screen space)
         Camera mainCamera = Camera.main;
         float screenHeight = 2f * mainCamera.orthographicSize;
         float screenWidth = screenHeight * mainCamera.aspect;
 
-        // Account for margins
         float availableWidth = screenWidth - (margin.x * 2);
         float availableHeight = screenHeight - (margin.y * 2);
 
-        // Calculate card size to fit grid
-        float cardWidth = 60f; //(availableWidth - ((columns - 1) * spacing.x)) / columns;
-        float cardHeight = 60f; //(availableHeight - ((rows - 1) * spacing.y)) / rows;
+        float cardWidth = 60f;
+        float cardHeight = 60f;
 
-        // Use the smaller dimension to maintain aspect ratio
         float cardSize = Mathf.Min(cardWidth, cardHeight);
 
-        // Calculate starting position (centered)
         float gridWidth = (columns * cardSize) + ((columns - 1) * spacing.x);
         float gridHeight = (rows * cardSize) + ((rows - 1) * spacing.y);
 
@@ -185,7 +168,6 @@ public class GridManager : MonoBehaviour
             gridHeight / 2 - cardSize / 2
         );
 
-        // Position each card
         for (int row = 0; row < rows; row++)
         {
             for (int col = 0; col < columns; col++)
@@ -204,77 +186,97 @@ public class GridManager : MonoBehaviour
         }
     }
 
-#endregion
+    #endregion
 
-    #region Game Logic
+    #region Game Logic - SIMPLE AND RELIABLE
 
     private void HandleCardClicked(CardController card)
     {
-        if (isCheckingMatch || card.IsMatched()) return;
+        // Prevent rapid clicks on the same card
+        if (Time.time - lastClickTime < CLICK_DELAY) return;
+        lastClickTime = Time.time;
 
-        // Limit to 2 cards flipped at once
-        if (flippedCards.Count >= 2)
-        {
-            StartCoroutine(CheckMatch());
-            return;
-        }
+        // Basic validation
+        if (card.IsMatched() || card.IsFlipped() || card.IsAnimating()) return;
 
-        // Don't allow flipping the same card twice
-        if (!flippedCards.Contains(card))
-        {
-            flippedCards.Add(card);
-        }
+        // If we already have 2 cards flipped and are checking them,
+        // we should wait for that check to complete before allowing more flips
+        if (flippedCards.Count >= 2 && matchCheckCoroutine != null) return;
+
+        // Flip the card
+        card.FlipCard();
     }
 
     private void HandleFlipComplete(CardController card)
     {
-        // Check for match when 2 cards are flipped
-        if (flippedCards.Count == 2 && !flippedCards.Contains(card))
+        // Add card to flipped list if it's facing front
+        if (card.IsFlipped() && !flippedCards.Contains(card))
         {
             flippedCards.Add(card);
         }
+        // Remove card if it's facing back (after mismatch)
+        else if (!card.IsFlipped() && flippedCards.Contains(card))
+        {
+            flippedCards.Remove(card);
+        }
 
+        // If we have 2 cards flipped, check for match
         if (flippedCards.Count == 2)
         {
-            StartCoroutine(CheckMatch());
+            // Don't start a new check if one is already running
+            if (matchCheckCoroutine == null)
+            {
+                matchCheckCoroutine = StartCoroutine(CheckMatch());
+            }
         }
     }
 
     private IEnumerator CheckMatch()
     {
-        isCheckingMatch = true;
-        GridManager.canClickAgain = true;
+        // Make a copy of the flipped cards to work with
+        CardController[] cardsToCheck = new CardController[2];
+        cardsToCheck[0] = flippedCards[0];
+        cardsToCheck[1] = flippedCards[1];
+
+        // Clear the list immediately so new cards can be flipped
+        flippedCards.Clear();
+
+        // Ensure we have 2 different cards
+        if (cardsToCheck[0] == cardsToCheck[1])
+        {
+            Debug.LogError("Same card twice! This shouldn't happen.");
+            matchCheckCoroutine = null;
+            yield break;
+        }
 
         // Wait a moment to show the cards
         yield return new WaitForSeconds(0.5f);
 
-        if (flippedCards.Count == 2)
+        // Check for match
+        bool isMatch = cardsToCheck[0].GetPairIndex() == cardsToCheck[1].GetPairIndex();
+
+        if (isMatch)
         {
-            CardController card1 = flippedCards[0];
-            CardController card2 = flippedCards[1];
+            // Match found
+            Debug.Log($"Match! Pair index: {cardsToCheck[0].GetPairIndex()}");
+            cardsToCheck[0].SetMatched();
+            cardsToCheck[1].SetMatched();
+        }
+        else
+        {
+            // No match - flip back
+            Debug.Log($"No match! {cardsToCheck[0].GetPairIndex()} vs {cardsToCheck[1].GetPairIndex()}");
 
-            if (card1.GetPairIndex() == card2.GetPairIndex())
-            {
-                // Match found
-                card1.SetMatched();
-                card2.SetMatched();
-                Debug.Log("Match found!");
+            // Flip both cards back
+            cardsToCheck[0].FlipCard();
+            cardsToCheck[1].FlipCard();
 
-                // Play match sound here
-            }
-            else
-            {
-                // No match - flip back
-                yield return new WaitForSeconds(0.5f);
-                card1.FlipCard();
-                card2.FlipCard();
-
-                // Play mismatch sound here
-            }
+            // Wait for flip back to complete (optional)
+            yield return new WaitForSeconds(0.6f);
         }
 
-        flippedCards.Clear();
-        isCheckingMatch = false;
+        // Clear the coroutine reference
+        matchCheckCoroutine = null;
     }
 
     #endregion
@@ -301,34 +303,6 @@ public class GridManager : MonoBehaviour
         SetupCardPairs();
         PositionCards();
     }
-
-    #endregion
-
-    #region Editor Integration
-
-#if UNITY_EDITOR
-    /*void OnValidate()
-    {
-        // Clamp values in editor
-        rows = Mathf.Max(2, rows);
-        columns = Mathf.Max(2, columns);
-
-        // Ensure even number of cards in editor
-        if ((rows * columns) % 2 != 0)
-        {
-            columns++;
-        }
-    }*/
-
-    [ContextMenu("Test 2x2 Grid")]
-    private void Test2x2() => RegenerateGrid(2, 2);
-
-    [ContextMenu("Test 3x3 Grid")]
-    private void Test3x3() => RegenerateGrid(3, 3);
-
-    [ContextMenu("Test 5x6 Grid")]
-    private void Test5x6() => RegenerateGrid(5, 6);
-#endif
 
     #endregion
 }

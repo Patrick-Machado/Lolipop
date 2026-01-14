@@ -2,16 +2,14 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 
-
 public class CardController : MonoBehaviour
 {
     [Header("Card Sprites")]
-    [SerializeField] private Sprite backSprite; // The back of the card
-    [SerializeField] private Sprite frontSprite; // The front image (banana, cherry, etc.)
+    [SerializeField] private Sprite backSprite;
+    [SerializeField] private Sprite frontSprite;
 
     [Header("Animation Settings")]
     [SerializeField] private float flipDuration = 0.5f;
-    [SerializeField] private AnimationCurve flipCurve = AnimationCurve.EaseInOut(0, 0, 1, 1);
 
     [Header("State")]
     [SerializeField] private bool isFlipped = false;
@@ -23,16 +21,16 @@ public class CardController : MonoBehaviour
     private BoxCollider2D boxCollider;
 
     // Card values
-    private int cardId; // Unique ID for matching
-    private int pairIndex; // Which fruit type this card represents
-
-    // Animation coroutine reference
-    private Coroutine flipCoroutine;
+    private int cardId;
+    private int pairIndex;
 
     // Events
     public System.Action<CardController> OnCardClicked;
     public System.Action<CardController> OnFlipComplete;
 
+    // Click protection
+    private float lastClickTime = 0f;
+    private const float CLICK_COOLDOWN = 0.3f;
 
     #region Initialization
 
@@ -46,19 +44,18 @@ public class CardController : MonoBehaviour
         if (boxCollider == null)
             boxCollider = gameObject.AddComponent<BoxCollider2D>();
         boxCollider.size = new Vector2(4.8f, 4.8f);
-        // Set initial state
-        SetCardBack();
 
+        SetCardBack();
     }
 
     public void Initialize(int id, int pairIdx, Sprite front, Sprite back)
     {
         cardId = id;
         pairIndex = pairIdx;
-        frontSprite = front; //spriteRenderer.sprite = front;
-        backSprite = back; spriteRenderer.sprite = back;
+        frontSprite = front;
+        backSprite = back;
+        spriteRenderer.sprite = back;
 
-        // Reset to default state
         ResetCard();
     }
 
@@ -68,106 +65,95 @@ public class CardController : MonoBehaviour
 
     public void FlipCard()
     {
-        if (isAnimating || isMatched) return;
+        // Prevent rapid clicks
+        if (Time.time - lastClickTime < CLICK_COOLDOWN) return;
+        lastClickTime = Time.time;
 
-        if (flipCoroutine != null)
-            StopCoroutine(flipCoroutine);
+        // Don't flip if already matched or animating
+        if (isMatched || isAnimating) return;
 
-        flipCoroutine = StartCoroutine(FlipAnimation(!isFlipped));
+        // Notify click
+        OnCardClicked?.Invoke(this);
+
+        // Start flip animation
+        StartCoroutine(FlipAnimation(!isFlipped));
     }
 
-    public void ResetCard(bool immediate = false)
+    public void ResetCard()
     {
-        if (flipCoroutine != null)
-        {
-            StopCoroutine(flipCoroutine);
-            flipCoroutine = null;
-        }
-
-        isAnimating = false;
         isFlipped = false;
         isMatched = false;
-
-        if (immediate)
-        {
-            SetCardBack();
-            transform.localScale = new Vector3(1f, 1f, 1f);
-        }
-        else
-        {
-            StartCoroutine(ResetCardAnimation());
-        }
+        SetCardBack();
+        spriteRenderer.color = Color.white;
+        transform.localScale = Vector3.one;
     }
 
     public void SetMatched()
     {
         isMatched = true;
-        // You can add visual feedback here (change color, disable, etc.)
-        spriteRenderer.color = new Color(0.5f, 0.5f, 0.5f, 0.5f);
+        // Visual feedback for match
+        spriteRenderer.color = new Color(0.7f, 0.7f, 0.7f, 0.7f);
     }
 
     #endregion
 
-    #region Animation
+    #region Animation - SIMPLE 3D ROTATION
 
     private IEnumerator FlipAnimation(bool flipToFront)
     {
         if (isAnimating) yield break;
 
         isAnimating = true;
-        OnCardClicked?.Invoke(this);
+
+        // Disable collider during animation to prevent multiple clicks
+        boxCollider.enabled = false;
 
         float elapsedTime = 0f;
+        float startRotation = flipToFront ? 0f : 180f;
+        float endRotation = flipToFront ? 180f : 0f;
 
-        Vector3 startScale = transform.localScale;
-        Vector3 targetScale = new Vector3(0.1f, transform.localScale.y, transform.localScale.z);
+        // Start rotation
+        transform.rotation = Quaternion.Euler(0, startRotation, 0);
 
-        // Phase 1: Shrink horizontally
-        while (elapsedTime < flipDuration / 2)
+        bool spriteSwitched = false;
+
+        while (elapsedTime < flipDuration)
         {
             elapsedTime += Time.deltaTime;
-            float t = elapsedTime / (flipDuration / 2);
-            float curveValue = flipCurve.Evaluate(t);
+            float progress = elapsedTime / flipDuration;
+            float currentRotation = Mathf.Lerp(startRotation, endRotation, progress);
 
-            transform.localScale = Vector3.Lerp(startScale, targetScale, curveValue);
+            transform.rotation = Quaternion.Euler(0, currentRotation, 0);
+
+            // Switch sprite at 90 degrees (mid-flip)
+            if (!spriteSwitched && Mathf.Abs(currentRotation - 90f) < 5f)
+            {
+                if (flipToFront)
+                    SetCardFront();
+                else
+                    SetCardBack();
+                spriteSwitched = true;
+            }
+
             yield return null;
         }
 
-        // Switch sprite at midpoint
+        // Ensure final state
+        transform.rotation = Quaternion.Euler(0, endRotation, 0);
+
         if (flipToFront)
             SetCardFront();
         else
             SetCardBack();
 
-        // Phase 2: Expand horizontally
-        elapsedTime = 0f;
-        //startScale = transform.localScale;
-        targetScale = new Vector3(0.1f, transform.localScale.y, transform.localScale.z);
-
-        while (elapsedTime < flipDuration / 2)
-        {
-            elapsedTime += Time.deltaTime;
-            float t = elapsedTime / (flipDuration / 2);
-            float curveValue = flipCurve.Evaluate(t);
-
-            transform.localScale = Vector3.Lerp(targetScale, startScale, curveValue);
-            yield return null;
-        }
-
-        //transform.localScale = targetScale;
         isFlipped = flipToFront;
         isAnimating = false;
 
+        // Re-enable collider
+        boxCollider.enabled = true;
 
+        // Notify completion
         OnFlipComplete?.Invoke(this);
-    }
-
-    private IEnumerator ResetCardAnimation()
-    {
-        if (isFlipped && !isMatched)
-        {
-            yield return FlipAnimation(false);
-        }
     }
 
     #endregion
@@ -192,8 +178,7 @@ public class CardController : MonoBehaviour
 
     void OnMouseDown()
     {
-        if (!isMatched && !isAnimating)
-            FlipCard();
+        FlipCard();
     }
 
     public int GetCardId() => cardId;
@@ -201,12 +186,6 @@ public class CardController : MonoBehaviour
     public bool IsFlipped() => isFlipped;
     public bool IsMatched() => isMatched;
     public bool IsAnimating() => isAnimating;
-
-    public void SetInteractable(bool interactable)
-    {
-        if (boxCollider != null)
-            boxCollider.enabled = interactable;
-    }
 
     #endregion
 }
