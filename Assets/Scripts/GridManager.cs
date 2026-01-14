@@ -31,8 +31,28 @@ public class GridManager : MonoBehaviour
     [SerializeField] AudioSource asFlLipCard;
     [SerializeField] AudioSource asWrongCard;
     [SerializeField] AudioSource asRightCard;
+    [SerializeField] AudioSource asVictory;
+    [SerializeField] AudioSource asGameOver;
 
 
+    [Header("Scoring System")]
+    [SerializeField] private int baseMatchScore = 100;
+    [SerializeField] private int baseMismatchPenalty = 10;
+    [SerializeField] private int comboBonus = 50;
+    [SerializeField] private int moveCount = 0;
+
+    private int score = 0;
+    private int currentCombo = 0;
+    private int totalMatches = 0;
+
+    public int GetScore() => score;
+    public int GetMoves() => moveCount;
+    public int GetMatches() => totalMatches;
+    public int GetCombo() => currentCombo;
+
+    [Header("Game Completion")]
+    [SerializeField] private int totalPairs = 0;
+    private bool gameWon = false;
 
 
     void Start()
@@ -41,6 +61,10 @@ public class GridManager : MonoBehaviour
         GenerateGrid();
         SetupCardPairs();
         PositionCards();
+
+        // Calculate total pairs
+        totalPairs = (rows * columns) / 2;
+        Debug.Log($"Game started. Find {totalPairs} pairs to win!");
     }
 
     private void ValidateGridSize()
@@ -244,6 +268,9 @@ public class GridManager : MonoBehaviour
 
     private IEnumerator CheckMatch()
     {
+        //isCheckingMatch = true;
+        moveCount++; // Count this as a move
+
         // Make a copy of the flipped cards to work with
         CardController[] cardsToCheck = new CardController[2];
         cardsToCheck[0] = flippedCards[0];
@@ -269,17 +296,29 @@ public class GridManager : MonoBehaviour
         if (isMatch)
         {
             // Match found
+            currentCombo++;
+            int matchScore = baseMatchScore + (currentCombo * comboBonus);
+            score += matchScore;
+            totalMatches++;
+
+            Debug.Log($"Match! +{matchScore} points (Combo: x{currentCombo}) Total: {score}");
+
             Debug.Log($"Match! Pair index: {cardsToCheck[0].GetPairIndex()}");
             cardsToCheck[0].SetMatched();
             cardsToCheck[1].SetMatched();
 
             // Play sound
             asRightCard.Play();
+
+            // Check for win condition after match
+            CheckWinCondition();
         }
         else
         {
+            currentCombo = 0;
             // No match - flip back
-            Debug.Log($"No match! {cardsToCheck[0].GetPairIndex()} vs {cardsToCheck[1].GetPairIndex()}");
+            score = Mathf.Max(0, score - baseMismatchPenalty);
+            Debug.Log($"No match! -{baseMismatchPenalty} points. Total: {score}");
 
             // Flip both cards back
             cardsToCheck[0].FlipCard();
@@ -294,6 +333,38 @@ public class GridManager : MonoBehaviour
         // Clear the coroutine reference
         matchCheckCoroutine = null;
     }
+
+    private void CheckWinCondition()
+    {
+        if (gameWon) return;
+
+        // Count matched cards
+        int matchedCount = 0;
+        for (int row = 0; row < rows; row++)
+        {
+            for (int col = 0; col < columns; col++)
+            {
+                if (cardGrid[row, col].IsMatched())
+                {
+                    matchedCount++;
+                }
+            }
+        }
+
+        // Check if all cards are matched (2 per pair)
+        if (matchedCount == rows * columns)
+        {
+            gameWon = true;
+            Debug.Log($"VICTORY! All {totalPairs} pairs found!");
+            Debug.Log($"Final Score: {score} | Moves: {moveCount} | Accuracy: {(float)totalMatches / moveCount * 100:F1}%");
+
+            // Trigger victory sound (you'll add this)
+            asVictory.Play();
+
+        }
+    }
+
+
 
     #endregion
 
