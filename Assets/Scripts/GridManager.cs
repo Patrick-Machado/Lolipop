@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using System;
 
 public class GridManager : MonoBehaviour
 {
@@ -77,6 +78,11 @@ public class GridManager : MonoBehaviour
         // Calculate total pairs
         totalPairs = (rows * columns) / 2;
         Debug.Log($"Game started. Find {totalPairs} pairs to win!");
+
+        if (!LoadGame())
+        {
+            Debug.Log("Starting new game");
+        }
     }
 
     private void ValidateGridSize()
@@ -380,9 +386,78 @@ public class GridManager : MonoBehaviour
 
             VictoryGO.SetActive(true);
 
+
+            // Save the completed game state
+            SaveGame();
+
         }
     }
 
+    public void SaveGame()
+    {
+        // Prepare data arrays
+        int totalCards = rows * columns;
+        int[] cardPairs = new int[totalCards];
+        bool[] matchedStates = new bool[totalCards];
+
+        // Collect card data
+        int index = 0;
+        for (int row = 0; row < rows; row++)
+        {
+            for (int col = 0; col < columns; col++)
+            {
+                cardPairs[index] = cardGrid[row, col].GetPairIndex();
+                matchedStates[index] = cardGrid[row, col].IsMatched();
+                index++;
+            }
+        }
+
+        // Create save data
+        SaveData saveData = new SaveData(
+            score, moveCount, totalMatches,
+            rows, columns, cardPairs, matchedStates
+        );
+
+        // Convert to JSON
+        string jsonData = JsonUtility.ToJson(saveData);
+
+        // Save to PlayerPrefs (simple solution)
+        PlayerPrefs.SetString("CardGame_Save", jsonData);
+        PlayerPrefs.SetInt("CardGame_HasSave", 1);
+        PlayerPrefs.Save();
+
+        Debug.Log("Game saved successfully!");
+    }
+
+    public bool LoadGame()
+    {
+        if (PlayerPrefs.GetInt("CardGame_HasSave", 0) == 0)
+        {
+            Debug.Log("No saved game found. Starting fresh.");
+            return false;
+        }
+
+        try
+        {
+            string jsonData = PlayerPrefs.GetString("CardGame_Save", "");
+            SaveData saveData = JsonUtility.FromJson<SaveData>(jsonData);
+
+            // Restore game state
+            score = saveData.savedScore;
+            moveCount = saveData.savedMoves;
+            totalMatches = saveData.savedMatches;
+
+            textScore.text = "Score: " + score;
+
+            Debug.Log($"Game loaded! Score: {score}, Moves: {moveCount}, Saved on: {saveData.saveDate}");
+            return true;
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Failed to load game: {e.Message}");
+            return false;
+        }
+    }
 
 
     #endregion
