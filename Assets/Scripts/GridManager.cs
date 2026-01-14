@@ -20,53 +20,40 @@ public class GridManager : MonoBehaviour
     [SerializeField] private Sprite backSprite;
     [SerializeField] private List<Sprite> frontSprites = new List<Sprite>();
 
-    // Game state
-    private CardController[,] cardGrid;
-    private List<CardController> flippedCards = new List<CardController>();
-    private Coroutine matchCheckCoroutine;
-
-    // Click tracking
-    private float lastClickTime = 0f;
-    private const float CLICK_DELAY = 0.2f;
-
-
-    [SerializeField] AudioSource asFlLipCard;
+    [Header("Audio")]
+    [SerializeField] AudioSource asCardFlip;
     [SerializeField] AudioSource asWrongCard;
     [SerializeField] AudioSource asRightCard;
     [SerializeField] AudioSource asVictory;
     [SerializeField] AudioSource asGameOver;
 
-
     [Header("Scoring System")]
     [SerializeField] private int baseMatchScore = 100;
     [SerializeField] private int baseMismatchPenalty = 10;
     [SerializeField] private int comboBonus = 50;
-    [SerializeField] private int moveCount = 0;
 
-    [Header("Current Score")]
+    [Header("Game State")]
     [SerializeField] int score = 0;
     [SerializeField] int currentCombo = 0;
     [SerializeField] int totalMatches = 0;
-
-    public int GetScore() => score;
-    public int GetMoves() => moveCount;
-    public int GetMatches() => totalMatches;
-    public int GetCombo() => currentCombo;
-
-    [Header("Game Completion")]
-    [SerializeField] private int totalPairs = 0;
+    [SerializeField] int moveCount = 0;
+    private int totalPairs = 0;
     private bool gameWon = false;
 
-
+    [Header("UI References")]
     [SerializeField] TMPro.TextMeshProUGUI textScore;
     [SerializeField] TMPro.TextMeshProUGUI textCombo;
     [SerializeField] GameObject VictoryGO;
+    [SerializeField] GameObject GameObverGO;
 
-    public void Replay()
-    {
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
-    }
+    private CardController[,] cardGrid;
+    private List<CardController> pendingMatchQueue = new List<CardController>();
+    private float lastClickTime = 0f;
+    private const float CLICK_DELAY = 0.15f;
 
+    [SerializeField] int lifes = 10;
+    [SerializeField] TMPro.TextMeshProUGUI lifesText;
+    public static bool notPlaying = false;
 
     void Start()
     {
@@ -75,78 +62,50 @@ public class GridManager : MonoBehaviour
         SetupCardPairs();
         PositionCards();
 
-        // Calculate total pairs
         totalPairs = (rows * columns) / 2;
-        Debug.Log($"Game started. Find {totalPairs} pairs to win!");
 
         if (!LoadGame())
         {
             Debug.Log("Starting new game");
         }
+        notPlaying = false;
+        lifesText.text = "Lifes: " + lifes;
     }
 
     private void ValidateGridSize()
     {
         int totalCards = rows * columns;
+        if (totalCards % 2 != 0) columns++;
 
-        if (totalCards % 2 != 0)
-        {
-            Debug.LogWarning($"Grid size {rows}x{columns} creates odd number of cards ({totalCards}). Adding one more column.");
-            columns++;
-        }
-
-        int neededPairs = totalCards / 2;
+        int neededPairs = (rows * columns) / 2;
         if (frontSprites.Count < neededPairs)
-        {
-            Debug.LogError($"Need at least {neededPairs} unique sprites but only have {frontSprites.Count}");
-        }
+            Debug.LogError($"Need {neededPairs} sprites, but only have {frontSprites.Count}");
     }
-
-    #region Grid Generation
 
     private void GenerateGrid()
     {
         cardGrid = new CardController[rows, columns];
-        ClearExistingCards();
+        foreach (Transform child in cardContainer) Destroy(child.gameObject);
 
-        for (int row = 0; row < rows; row++)
+        for (int r = 0; r < rows; r++)
         {
-            for (int col = 0; col < columns; col++)
+            for (int c = 0; c < columns; c++)
             {
-                CreateCard(row, col);
+                GameObject cardObj = Instantiate(cardPrefab, cardContainer);
+                CardController card = cardObj.GetComponent<CardController>();
+                cardGrid[r, c] = card;
+
+                // Subscribe to events
+                card.OnCardClicked += HandleCardClicked;
+                card.OnFlipComplete += HandleFlipComplete;
             }
         }
-    }
-
-    private void CreateCard(int row, int col)
-    {
-        if (cardPrefab == null)
-        {
-            Debug.LogError("Card prefab is not assigned!");
-            return;
-        }
-
-        GameObject cardObj = Instantiate(cardPrefab, cardContainer);
-        cardObj.name = $"Card_{row}_{col}";
-
-        CardController card = cardObj.GetComponent<CardController>();
-        if (card == null)
-        {
-            Debug.LogError("Card prefab doesn't have CardController component!");
-            Destroy(cardObj);
-            return;
-        }
-
-        cardGrid[row, col] = card;
-        card.OnCardClicked += HandleCardClicked;
-        card.OnFlipComplete += HandleFlipComplete;
     }
 
     private void SetupCardPairs()
     {
         int totalCards = rows * columns;
         List<int> cardPairs = new List<int>();
-
         for (int i = 0; i < totalCards / 2; i++)
         {
             int spriteIndex = i % frontSprites.Count;
@@ -154,336 +113,280 @@ public class GridManager : MonoBehaviour
             cardPairs.Add(spriteIndex);
         }
 
-        ShuffleList(cardPairs);
+        // Shuffle
+        for (int i = 0; i < cardPairs.Count; i++)
+        {
+            int temp = cardPairs[i];
+            int randomIndex = UnityEngine.Random.Range(i, cardPairs.Count);
+            cardPairs[i] = cardPairs[randomIndex];
+            cardPairs[randomIndex] = temp;
+        }
 
         int index = 0;
-        for (int row = 0; row < rows; row++)
+        for (int r = 0; r < rows; r++)
         {
-            for (int col = 0; col < columns; col++)
+            for (int c = 0; c < columns; c++)
             {
-                int pairIndex = cardPairs[index];
-                Sprite frontSprite = frontSprites[pairIndex];
-
-                cardGrid[row, col].Initialize(
-                    index,
-                    pairIndex,
-                    frontSprite,
-                    backSprite
-                );
-
+                cardGrid[r, c].Initialize(index, cardPairs[index], frontSprites[cardPairs[index]], backSprite);
                 index++;
             }
         }
     }
 
-    private void ShuffleList<T>(List<T> list)
-    {
-        System.Random rng = new System.Random();
-        int n = list.Count;
-        while (n > 1)
-        {
-            n--;
-            int k = rng.Next(n + 1);
-            T value = list[k];
-            list[k] = list[n];
-            list[n] = value;
-        }
-    }
-
-    #endregion
-
-    #region Card Positioning & Scaling
-
     private void PositionCards()
     {
-        if (cardContainer == null) return;
-
         Camera mainCamera = Camera.main;
         float screenHeight = 2f * mainCamera.orthographicSize;
         float screenWidth = screenHeight * mainCamera.aspect;
-
         float availableWidth = screenWidth - (margin.x * 2);
         float availableHeight = screenHeight - (margin.y * 2);
 
-        float cardWidth = 60f;
-        float cardHeight = 60f;
-
-        float cardSize = Mathf.Min(cardWidth, cardHeight);
+        float cardSize = 60f;// Mathf.Min(availableWidth / columns, availableHeight / rows) * 0.9f;
 
         float gridWidth = (columns * cardSize) + ((columns - 1) * spacing.x);
         float gridHeight = (rows * cardSize) + ((rows - 1) * spacing.y);
 
-        Vector2 startPos = new Vector2(
-            -gridWidth / 2 + cardSize / 2,
-            gridHeight / 2 - cardSize / 2
-        );
+        Vector2 startPos = new Vector2(-gridWidth / 2 + cardSize / 2, gridHeight / 2 - cardSize / 2);
 
-        for (int row = 0; row < rows; row++)
+        for (int r = 0; r < rows; r++)
         {
-            for (int col = 0; col < columns; col++)
+            for (int c = 0; c < columns; c++)
             {
-                CardController card = cardGrid[row, col];
-                if (card == null) continue;
-
-                Vector2 position = new Vector2(
-                    startPos.x + col * (cardSize + spacing.x),
-                    startPos.y - row * (cardSize + spacing.y)
-                );
-
-                card.transform.localPosition = position;
-                card.transform.localScale = new Vector3(cardSize, cardSize, 1f);
+                Vector2 pos = new Vector2(startPos.x + c * (cardSize + spacing.x), startPos.y - r * (cardSize + spacing.y));
+                cardGrid[r, c].transform.localPosition = pos;
+                cardGrid[r, c].transform.localScale = new Vector3(cardSize, cardSize, 1f);
             }
         }
     }
 
-    #endregion
-
-    #region Game Logic - SIMPLE AND RELIABLE
-
     private void HandleCardClicked(CardController card)
     {
-        // Prevent rapid clicks on the same card
+        // Global click delay
         if (Time.time - lastClickTime < CLICK_DELAY) return;
-        lastClickTime = Time.time;
 
-        // Basic validation
+        // Basic state check
         if (card.IsMatched() || card.IsFlipped() || card.IsAnimating()) return;
 
-        // If we already have 2 cards flipped and are checking them,
-        // we should wait for that check to complete before allowing more flips
-        if (flippedCards.Count >= 2 && matchCheckCoroutine != null) return;
+        // Ensure this card isn't already waiting in the logic queue
+        if (pendingMatchQueue.Contains(card)) return;
 
-        // Play sound
-        asFlLipCard.Play();
-
-        // Flip the card
-        card.FlipCard();
+        asCardFlip.Play();
+        lastClickTime = Time.time;
+        card.FlipCard(); // Order the physical flip
     }
 
     private void HandleFlipComplete(CardController card)
     {
-        // Add card to flipped list if it's facing front
-        if (card.IsFlipped() && !flippedCards.Contains(card))
+        if (card.IsFlipped())
         {
-            flippedCards.Add(card);
-        }
-        // Remove card if it's facing back (after mismatch)
-        else if (!card.IsFlipped() && flippedCards.Contains(card))
-        {
-            flippedCards.Remove(card);
-        }
+            pendingMatchQueue.Add(card);
 
-        // If we have 2 cards flipped, check for match
-        if (flippedCards.Count == 2)
-        {
-            // Don't start a new check if one is already running
-            if (matchCheckCoroutine == null)
+            // Once we have a pair, take them OUT of the queue immediately
+            // so the next flip creates a fresh pair.
+            if (pendingMatchQueue.Count >= 2)
             {
-                matchCheckCoroutine = StartCoroutine(CheckMatch());
+                CardController c1 = pendingMatchQueue[0];
+                CardController c2 = pendingMatchQueue[1];
+                pendingMatchQueue.RemoveRange(0, 2);
+
+                StartCoroutine(CheckMatchSequence(c1, c2));
             }
         }
     }
 
-    private IEnumerator CheckMatch()
+
+    private IEnumerator CheckMatchSequence(CardController c1, CardController c2)
     {
-        //isCheckingMatch = true;
-        moveCount++; // Count this as a move
+        moveCount++;
+        yield return new WaitForSeconds(0.5f); // Duration to view the pair
 
-        // Make a copy of the flipped cards to work with
-        CardController[] cardsToCheck = new CardController[2];
-        cardsToCheck[0] = flippedCards[0];
-        cardsToCheck[1] = flippedCards[1];
-
-        // Clear the list immediately so new cards can be flipped
-        flippedCards.Clear();
-
-        // Ensure we have 2 different cards
-        if (cardsToCheck[0] == cardsToCheck[1])
+        if (c1.GetPairIndex() == c2.GetPairIndex())
         {
-            Debug.LogError("Same card twice! This shouldn't happen.");
-            matchCheckCoroutine = null;
-            yield break;
-        }
-
-        // Wait a moment to show the cards
-        yield return new WaitForSeconds(0.5f);
-
-        // Check for match
-        bool isMatch = cardsToCheck[0].GetPairIndex() == cardsToCheck[1].GetPairIndex();
-
-        if (isMatch)
-        {
-            // Match found
+            // MATCH FOUND
             currentCombo++;
-            int matchScore = baseMatchScore + (currentCombo * comboBonus);
-            score += matchScore;
+            score += baseMatchScore + (currentCombo * comboBonus);
             totalMatches++;
-            textScore.text = "Score: " + score;
-            textCombo.text = "Combo: : " + currentCombo;
 
-            Debug.Log($"Match! +{matchScore} points (Combo: x{currentCombo}) Total: {score}");
-
-            Debug.Log($"Match! Pair index: {cardsToCheck[0].GetPairIndex()}");
-            cardsToCheck[0].SetMatched();
-            cardsToCheck[1].SetMatched();
-
-            // Play sound
+            c1.SetMatched();
+            c2.SetMatched();
             asRightCard.Play();
 
-            // Check for win condition after match
             CheckWinCondition();
         }
         else
         {
+            // MISMATCH
             currentCombo = 0;
-            // No match - flip back
             score = Mathf.Max(0, score - baseMismatchPenalty);
-            Debug.Log($"No match! -{baseMismatchPenalty} points. Total: {score}");
-            textScore.text = "Score: " + score;
-            textCombo.text = "Combo: : " + currentCombo;
+            asWrongCard.Play();
+
+            lifes--;
+            if (lifes <= 0)
+            { lifes = 0; }
+            lifesText.text = "Lifes: " + lifes;
+            if (lifes <= 0)
+            {
+                asGameOver.Play();
+                GameObverGO.SetActive(true);
+                notPlaying = true;
+            }
 
 
-            // Flip both cards back
-            cardsToCheck[0].FlipCard();
-            cardsToCheck[1].FlipCard();
-
-            asWrongCard.Play(); // Play sound
-
-            // Wait for flip back to complete (optional)
-            yield return new WaitForSeconds(0.6f);
+            c1.FlipCard(); // Flip back
+            c2.FlipCard(); // Flip back
         }
 
-        // Clear the coroutine reference
-        matchCheckCoroutine = null;
+        UpdateUI();
+    }
+
+    private void UpdateUI()
+    {
+        if (textScore) textScore.text = "Score: " + score;
+        if (textCombo) textCombo.text = "Combo: " + currentCombo;
     }
 
     private void CheckWinCondition()
     {
-        if (gameWon) return;
-
-        // Count matched cards
-        int matchedCount = 0;
-        for (int row = 0; row < rows; row++)
-        {
-            for (int col = 0; col < columns; col++)
-            {
-                if (cardGrid[row, col].IsMatched())
-                {
-                    matchedCount++;
-                }
-            }
-        }
-
-        // Check if all cards are matched (2 per pair)
-        if (matchedCount == rows * columns)
+        if (totalMatches >= totalPairs)
         {
             gameWon = true;
-            Debug.Log($"VICTORY! All {totalPairs} pairs found!");
-            Debug.Log($"Final Score: {score} | Moves: {moveCount} | Accuracy: {(float)totalMatches / moveCount * 100:F1}%");
-
-            // Trigger victory sound (you'll add this)
             asVictory.Play();
-
-            VictoryGO.SetActive(true);
-
-
-            // Save the completed game state
+            if (VictoryGO) VictoryGO.SetActive(true);
+            notPlaying = true;
             SaveGame();
-
         }
     }
 
+    public void Replay() => SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+
     public void SaveGame()
+
     {
+
         // Prepare data arrays
+
         int totalCards = rows * columns;
+
         int[] cardPairs = new int[totalCards];
+
         bool[] matchedStates = new bool[totalCards];
 
+
+
         // Collect card data
+
         int index = 0;
+
         for (int row = 0; row < rows; row++)
+
         {
+
             for (int col = 0; col < columns; col++)
+
             {
+
                 cardPairs[index] = cardGrid[row, col].GetPairIndex();
+
                 matchedStates[index] = cardGrid[row, col].IsMatched();
+
                 index++;
+
             }
+
         }
 
+
+
         // Create save data
+
         SaveData saveData = new SaveData(
+
             score, moveCount, totalMatches,
+
             rows, columns, cardPairs, matchedStates
+
         );
 
+
+
         // Convert to JSON
+
         string jsonData = JsonUtility.ToJson(saveData);
 
+
+
         // Save to PlayerPrefs (simple solution)
+
         PlayerPrefs.SetString("CardGame_Save", jsonData);
+
         PlayerPrefs.SetInt("CardGame_HasSave", 1);
+
         PlayerPrefs.Save();
 
+
+
         Debug.Log("Game saved successfully!");
+
     }
 
     public bool LoadGame()
+
     {
+
         if (PlayerPrefs.GetInt("CardGame_HasSave", 0) == 0)
+
         {
+
             Debug.Log("No saved game found. Starting fresh.");
+
             return false;
+
         }
 
+
+
         try
+
         {
+
             string jsonData = PlayerPrefs.GetString("CardGame_Save", "");
+
             SaveData saveData = JsonUtility.FromJson<SaveData>(jsonData);
 
+
+
             // Restore game state
+
             score = saveData.savedScore;
-            moveCount = saveData.savedMoves;
-            totalMatches = saveData.savedMatches;
+
+            //moveCount = saveData.savedMoves;
+
+            //totalMatches = saveData.savedMatches;
+
+
 
             textScore.text = "Score: " + score;
 
+
+
             Debug.Log($"Game loaded! Score: {score}, Moves: {moveCount}, Saved on: {saveData.saveDate}");
+
             return true;
+
         }
+
         catch (Exception e)
+
         {
+
             Debug.LogError($"Failed to load game: {e.Message}");
+
             return false;
+
         }
+
     }
 
 
-    #endregion
-
-    #region Utility Methods
-
-    private void ClearExistingCards()
-    {
-        if (cardContainer == null) return;
-
-        foreach (Transform child in cardContainer)
-        {
-            Destroy(child.gameObject);
-        }
-    }
-
-    public void RegenerateGrid(int newRows, int newColumns)
-    {
-        rows = newRows;
-        columns = newColumns;
-
-        ValidateGridSize();
-        GenerateGrid();
-        SetupCardPairs();
-        PositionCards();
-    }
-
-    #endregion
 }
+
