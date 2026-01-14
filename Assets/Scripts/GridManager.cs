@@ -41,9 +41,10 @@ public class GridManager : MonoBehaviour
     [SerializeField] private int comboBonus = 50;
     [SerializeField] private int moveCount = 0;
 
-    private int score = 0;
-    private int currentCombo = 0;
-    private int totalMatches = 0;
+    [Header("Current Score")]
+    [SerializeField] int score = 0;
+    [SerializeField] int currentCombo = 0;
+    [SerializeField] int totalMatches = 0;
 
     public int GetScore() => score;
     public int GetMoves() => moveCount;
