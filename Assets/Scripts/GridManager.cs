@@ -27,6 +27,14 @@ public class GridManager : MonoBehaviour
     private float lastClickTime = 0f;
     private const float CLICK_DELAY = 0.2f;
 
+
+    [SerializeField] AudioSource asFlLipCard;
+    [SerializeField] AudioSource asWrongCard;
+    [SerializeField] AudioSource asRightCard;
+
+
+
+
     void Start()
     {
         ValidateGridSize();
@@ -203,6 +211,9 @@ public class GridManager : MonoBehaviour
         // we should wait for that check to complete before allowing more flips
         if (flippedCards.Count >= 2 && matchCheckCoroutine != null) return;
 
+        // Play sound
+        asFlLipCard.Play();
+
         // Flip the card
         card.FlipCard();
     }
@@ -261,6 +272,9 @@ public class GridManager : MonoBehaviour
             Debug.Log($"Match! Pair index: {cardsToCheck[0].GetPairIndex()}");
             cardsToCheck[0].SetMatched();
             cardsToCheck[1].SetMatched();
+
+            // Play sound
+            asRightCard.Play();
         }
         else
         {
@@ -270,6 +284,8 @@ public class GridManager : MonoBehaviour
             // Flip both cards back
             cardsToCheck[0].FlipCard();
             cardsToCheck[1].FlipCard();
+
+            asWrongCard.Play(); // Play sound
 
             // Wait for flip back to complete (optional)
             yield return new WaitForSeconds(0.6f);

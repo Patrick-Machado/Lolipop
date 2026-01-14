@@ -86,6 +86,7 @@ public class CardController : MonoBehaviour
         SetCardBack();
         spriteRenderer.color = Color.white;
         transform.localScale = Vector3.one;
+        
     }
 
     public void SetMatched()
