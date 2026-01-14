@@ -1,6 +1,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class GridManager : MonoBehaviour
 {
@@ -54,6 +55,16 @@ public class GridManager : MonoBehaviour
     [Header("Game Completion")]
     [SerializeField] private int totalPairs = 0;
     private bool gameWon = false;
+
+
+    [SerializeField] TMPro.TextMeshProUGUI textScore;
+    [SerializeField] TMPro.TextMeshProUGUI textCombo;
+    [SerializeField] GameObject VictoryGO;
+
+    public void Replay()
+    {
+        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+    }
 
 
     void Start()
@@ -301,6 +312,8 @@ public class GridManager : MonoBehaviour
             int matchScore = baseMatchScore + (currentCombo * comboBonus);
             score += matchScore;
             totalMatches++;
+            textScore.text = "Score: " + score;
+            textCombo.text = "Combo: : " + currentCombo;
 
             Debug.Log($"Match! +{matchScore} points (Combo: x{currentCombo}) Total: {score}");
 
@@ -320,6 +333,9 @@ public class GridManager : MonoBehaviour
             // No match - flip back
             score = Mathf.Max(0, score - baseMismatchPenalty);
             Debug.Log($"No match! -{baseMismatchPenalty} points. Total: {score}");
+            textScore.text = "Score: " + score;
+            textCombo.text = "Combo: : " + currentCombo;
+
 
             // Flip both cards back
             cardsToCheck[0].FlipCard();
@@ -361,6 +377,8 @@ public class GridManager : MonoBehaviour
 
             // Trigger victory sound (you'll add this)
             asVictory.Play();
+
+            VictoryGO.SetActive(true);
 
         }
     }
